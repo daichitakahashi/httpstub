@@ -1,4 +1,4 @@
-module github.com/k1LoW/httpstub
+module github.com/daichitakahashi/httpstub
 
 go 1.21.0
 
