@@ -1,102 +1,14 @@
 package httpstub
 
-import (
-	"errors"
-	"io"
-	"net/http"
-	"os"
-	"strings"
-
-	"github.com/pb33f/libopenapi"
-	validator "github.com/pb33f/libopenapi-validator"
-	"github.com/pb33f/libopenapi/datamodel"
-)
-
 type config struct {
 	useTLS                              bool
 	cacert, cert, key                   []byte
 	clientCacert, clientCert, clientKey []byte
-	openAPI3Doc                         *libopenapi.Document
-	openAPI3Validator                   *validator.Validator
 	skipValidateRequest                 bool
 	skipValidateResponse                bool
 }
 
 type Option func(*config) error
-
-// OpenApi3 sets OpenAPI Document using file path.
-func OpenApi3(l string) Option {
-	return func(c *config) error {
-		var doc libopenapi.Document
-		dc := &datamodel.DocumentConfiguration{
-			AllowFileReferences:   true,
-			AllowRemoteReferences: true,
-		}
-		switch {
-		case strings.HasPrefix(l, "https://") || strings.HasPrefix(l, "http://"):
-			res, err := http.Get(l)
-			if err != nil {
-				return err
-			}
-			defer res.Body.Close()
-			b, err := io.ReadAll(res.Body)
-			if err != nil {
-				return err
-			}
-			doc, err = libopenapi.NewDocumentWithConfiguration(b, dc)
-			if err != nil {
-				return err
-			}
-		default:
-			b, err := os.ReadFile(l)
-			if err != nil {
-				return err
-			}
-			doc, err = libopenapi.NewDocumentWithConfiguration(b, dc)
-			if err != nil {
-				return err
-			}
-		}
-		v, errs := validator.NewValidator(doc)
-		if len(errs) > 0 {
-			return errors.Join(errs...)
-		}
-		if _, errs := v.ValidateDocument(); len(errs) > 0 {
-			var err error
-			for _, e := range errs {
-				err = errors.Join(err, e)
-			}
-			return err
-		}
-		c.openAPI3Doc = &doc
-		c.openAPI3Validator = &v
-		return nil
-	}
-}
-
-// OpenApi3FromData sets OpenAPI Document from bytes
-func OpenApi3FromData(b []byte) Option {
-	return func(c *config) error {
-		doc, err := libopenapi.NewDocument(b)
-		if err != nil {
-			return err
-		}
-		v, errs := validator.NewValidator(doc)
-		if len(errs) > 0 {
-			return errors.Join(errs...)
-		}
-		if _, errs := v.ValidateDocument(); len(errs) > 0 {
-			var err error
-			for _, e := range errs {
-				err = errors.Join(err, e)
-			}
-			return err
-		}
-		c.openAPI3Doc = &doc
-		c.openAPI3Validator = &v
-		return nil
-	}
-}
 
 // SkipValidateRequest sets whether to skip validation of HTTP request with OpenAPI Document.
 func SkipValidateRequest(skip bool) Option {

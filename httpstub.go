@@ -2,31 +2,19 @@ package httpstub
 
 import (
 	"bytes"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/minio/pkg/wildcard"
-	"github.com/pb33f/libopenapi"
-	validator "github.com/pb33f/libopenapi-validator"
-	"github.com/pb33f/libopenapi-validator/paths"
-	"github.com/pb33f/libopenapi/datamodel/high/base"
-	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
-	openapijson "github.com/pb33f/libopenapi/json"
-	"github.com/pb33f/libopenapi/orderedmap"
 )
 
 var (
@@ -53,8 +41,6 @@ type Router struct {
 	useTLS                              bool
 	cacert, cert, key                   []byte
 	clientCacert, clientCert, clientKey []byte
-	openAPI3Doc                         *libopenapi.Document
-	openAPI3Validator                   *validator.Validator
 	skipValidateRequest                 bool
 	skipValidateResponse                bool
 	mu                                  sync.RWMutex
@@ -119,19 +105,14 @@ func NewRouter(t TB, opts ...Option) *Router {
 		}
 	}
 	rt := &Router{
-		t:                 t,
-		useTLS:            c.useTLS,
-		cacert:            c.cacert,
-		cert:              c.cert,
-		key:               c.key,
-		clientCacert:      c.clientCacert,
-		clientCert:        c.clientCert,
-		clientKey:         c.clientKey,
-		openAPI3Doc:       c.openAPI3Doc,
-		openAPI3Validator: c.openAPI3Validator,
-	}
-	if err := rt.setOpenApi3Vaildator(); err != nil {
-		t.Fatal(err)
+		t:            t,
+		useTLS:       c.useTLS,
+		cacert:       c.cacert,
+		cert:         c.cert,
+		key:          c.key,
+		clientCacert: c.clientCacert,
+		clientCert:   c.clientCert,
+		clientKey:    c.clientKey,
 	}
 	return rt
 }
@@ -436,120 +417,6 @@ func (m *matcher) ResponseStringf(status int, format string, a ...any) {
 	m.Response(status, b)
 }
 
-type responseExampleConfig struct {
-	status string
-}
-
-func newResponseExampleConfig() *responseExampleConfig {
-	return &responseExampleConfig{status: "*"}
-}
-
-type responseExampleOption func(c *responseExampleConfig) error
-
-// Status specify the example response to use by status code
-func Status(pattern string) responseExampleOption {
-	return func(c *responseExampleConfig) error {
-		c.status = pattern
-		return nil
-	}
-}
-
-// ResponseExample set handler which return response using examples of OpenAPI v3 Document
-func (m *matcher) ResponseExample(opts ...responseExampleOption) {
-	if m.router.openAPI3Doc == nil {
-		m.router.t.Error("no OpenAPI v3 document is set")
-		return
-	}
-	c := newResponseExampleConfig()
-	for _, opt := range opts {
-		if err := opt(c); err != nil {
-			m.router.t.Error(err)
-			return
-		}
-	}
-	doc := *m.router.openAPI3Doc
-	v3m, errs := doc.BuildV3Model()
-	if errs != nil {
-		m.router.t.Errorf("failed to build OpenAPI v3 model: %v", errors.Join(errs...))
-		return
-	}
-	fn := func(w http.ResponseWriter, r *http.Request) {
-		pathItem, errs, pathValue := paths.FindPath(r, &v3m.Model)
-		if pathItem == nil || errs != nil {
-			var err error
-			for _, e := range errs {
-				err = errors.Join(err, e)
-			}
-			m.router.t.Errorf("failed to find route for %v %v: %v", r.Method, r.URL.Path, err)
-			return
-		}
-		op, ok := pathItem.GetOperations().Get(strings.ToLower(r.Method))
-		if !ok {
-			m.router.t.Errorf("failed to find route (%v %v) operation of method: %s", r.Method, pathValue, r.Method)
-			return
-		}
-		s, res := matchOne(op.Responses, c.status)
-		if res == nil {
-			m.router.t.Errorf("failed to find route (%v %v) response of status %s", r.Method, pathValue, c.status)
-			return
-		}
-		status, err := strconv.Atoi(s)
-		if err != nil {
-			m.router.t.Error(err)
-			return
-		}
-
-		mime := r.Header.Get("Content-Type")
-		var e *base.Example
-		if res.Content != nil {
-			mt, ok := res.Content.Get(mime)
-			if !ok {
-				p := res.Content.First()
-				mime, mt = p.Key(), p.Value()
-			}
-			if mt == nil {
-				m.router.t.Errorf("failed to find route (%v %v %v) mimeType", status, r.Method, pathValue)
-				return
-			}
-			if mt.Examples.Len() == 0 {
-				m.router.t.Errorf("failed to find route (%v %v %v) example", status, r.Method, pathValue)
-				return
-			}
-			e = one(mt.Examples)
-		}
-		var b []byte
-		switch {
-		case e == nil:
-			b = nil
-		case strings.Contains(mime, "text"):
-			b = []byte(e.Value.Value)
-		default:
-			b, err = openapijson.YAMLNodeToJSON(e.Value, "  ")
-			if err != nil {
-				m.router.t.Errorf("failed to marshal body of route (%v %v %v)", status, r.Method, pathValue)
-				return
-			}
-		}
-
-		w.Header().Set("Content-Type", mime)
-		w.WriteHeader(status)
-		_, _ = w.Write(b)
-	}
-	m.handler = http.HandlerFunc(fn)
-}
-
-// ResponseExample set handler which return response using examples of OpenAPI v3 Document
-func (rt *Router) ResponseExample(opts ...responseExampleOption) {
-	m := &matcher{
-		matchFuncs: []matchFunc{func(_ *http.Request) bool { return true }},
-		router:     rt,
-	}
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.matchers = append(rt.matchers, m)
-	m.ResponseExample(opts...)
-}
-
 // Requests returns []*http.Request received by router.
 func (rt *Router) Requests() []*http.Request {
 	rt.mu.RLock()
@@ -651,29 +518,6 @@ func (t *transport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r.URL.Opaque = t.URL.Opaque
 	res, err := t.transport().RoundTrip(r)
 	return res, err
-}
-
-func one[K comparable, V *base.Example](m *orderedmap.Map[K, V]) V {
-	l := m.Len()
-	i := rand.Intn(l)
-	for p := range orderedmap.Iterate(context.Background(), m) {
-		if i == 0 {
-			return p.Value()
-		}
-		i--
-	}
-	return nil
-}
-
-// matchOne returns match one randomly from map.
-func matchOne(r *v3.Responses, pattern string) (string, *v3.Response) {
-	m := r.Codes
-	for p := range orderedmap.Iterate(context.Background(), m) {
-		if wildcard.MatchSimple(pattern, p.Key()) {
-			return p.Key(), p.Value()
-		}
-	}
-	return "", nil
 }
 
 func withCloneReq(fn matchFunc) matchFunc {

@@ -7,9 +7,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/golang/mock/gomock"
-	mock_httpstub "github.com/k1LoW/httpstub/mock"
 )
 
 func TestStub(t *testing.T) {
@@ -707,101 +704,6 @@ func TestClearRequests(t *testing.T) {
 		})
 	}
 }
-
-func TestMatcherResponseExample(t *testing.T) {
-	tests := []struct {
-		name            string
-		req             *http.Request
-		status          string
-		wantContentType string
-		wantErr         bool
-	}{
-		{"valid req/res", newRequest(t, http.MethodGet, "/api/v1/users", ""), "*", "application/json", false},
-		{"valid req/res", newRequest(t, http.MethodGet, "/api/v1/ping", ""), "*", "text/plain", false},
-		{"valid req/res with status 200", newRequest(t, http.MethodGet, "/api/v1/users", ""), "200", "application/json", false},
-		{"valid req/res with status 2*", newRequest(t, http.MethodGet, "/api/v1/users", ""), "2*", "application/json", false},
-		{"invalid req", newRequest(t, http.MethodPost, "/api/v1/users", `{"invalid": "alice", "req": "passw0rd"}`), "*", "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			mockTB := mock_httpstub.NewMockTB(ctrl)
-			mockTB.EXPECT().Helper()
-			if tt.wantErr {
-				mockTB.EXPECT().Errorf(gomock.Any(), gomock.Any())
-			}
-			rt := NewRouter(t, OpenApi3("testdata/openapi3.yml"))
-			rt.t = mockTB
-			rt.Method(http.MethodGet).Path("/api/v1/users").ResponseExample(Status(tt.status))
-			rt.Method(http.MethodGet).Path("/api/v1/ping").ResponseExample(Status(tt.status))
-			ts := rt.Server()
-			t.Cleanup(func() {
-				ts.Close()
-			})
-			tc := ts.Client()
-			res, err := tc.Do(tt.req)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			if tt.wantErr {
-				return
-			}
-			got := res.Header.Get("Content-Type")
-			if got != tt.wantContentType {
-				t.Errorf("got %v\nwant %v", got, tt.wantContentType)
-			}
-		})
-	}
-}
-
-func TestRouterResponseExample(t *testing.T) {
-	tests := []struct {
-		name            string
-		req             *http.Request
-		status          string
-		wantContentType string
-		wantErr         bool
-	}{
-		{"valid req/res", newRequest(t, http.MethodGet, "/api/v1/users", ""), "*", "application/json", false},
-		{"valid req/res", newRequest(t, http.MethodGet, "/api/v1/ping", ""), "*", "text/plain", false},
-		{"valid req/res with status 200", newRequest(t, http.MethodGet, "/api/v1/users", ""), "200", "application/json", false},
-		{"valid req/res with status 2*", newRequest(t, http.MethodGet, "/api/v1/users", ""), "2*", "application/json", false},
-		{"invalid req", newRequest(t, http.MethodPost, "/api/v1/users", `{"invalid": "alice", "req": "passw0rd"}`), "*", "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			defer ctrl.Finish()
-			mockTB := mock_httpstub.NewMockTB(ctrl)
-			mockTB.EXPECT().Helper()
-			if tt.wantErr {
-				mockTB.EXPECT().Errorf(gomock.Any(), gomock.Any())
-			}
-			rt := NewRouter(t, OpenApi3("testdata/openapi3.yml"))
-			rt.t = mockTB
-			rt.ResponseExample(Status(tt.status))
-			ts := rt.Server()
-			t.Cleanup(func() {
-				ts.Close()
-			})
-			tc := ts.Client()
-			res, err := tc.Do(tt.req)
-			if err != nil {
-				t.Error(err)
-			}
-			if tt.wantErr {
-				return
-			}
-			got := res.Header.Get("Content-Type")
-			if got != tt.wantContentType {
-				t.Errorf("got %v\nwant %v", got, tt.wantContentType)
-			}
-		})
-	}
-}
-
 func TestURL(t *testing.T) {
 	rt := NewRouter(t)
 	{
